@@ -37,7 +37,8 @@ if st.button("Analyze Logs"):
                     error_summary = "No errors parsed"
 
                 try:
-                    analysis_text = json.dumps(response.dict(), indent=2)
+                    # Pydantic v2: use model_dump() instead of dict()
+                    analysis_text = json.dumps(response.model_dump(), indent=2)
                 except Exception:
                     analysis_text = str(response)
 

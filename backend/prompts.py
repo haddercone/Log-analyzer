@@ -4,7 +4,7 @@ from langchain_core.prompts import PromptTemplate
 log_analysis_prompt = PromptTemplate(
     input_variables=["log_text"],
     template="""
-You are a log analysis assistant. Analyze the following log text and return JSON like this:
+You are a log analysis assistant. Analyze the following log text and return JSON like this along with source link:
 {{
   "errors": [
     {{
@@ -16,7 +16,16 @@ You are a log analysis assistant. Analyze the following log text and return JSON
   "possible_solutions": [
     {{
       "error_message": "Error details here",
-      "solutions": ["Step 1", "Step 2"]
+      "solutions": [
+        {{
+          "solution_text": "Step 1",
+          "search_keywords": "how to fix step 1" 
+        }},
+        {{
+          "solution_text": "Step 2",
+          "search_keywords": "how to fix step 2"
+        }}
+      ]
     }}
   ]
 }}
