@@ -1,6 +1,6 @@
 from langchain_core.prompts import PromptTemplate
 
-# Create the PromptTemplate (probably already done in backend/prompts.py)
+# Create the PromptTemplate with escaped braces
 log_analysis_prompt = PromptTemplate(
     input_variables=["log_text"],
     template="""
@@ -20,7 +20,7 @@ Follow these steps **in order** for every analysis:
 
 If unclear, ask:
 
-> “What is the source/system for this log?”
+> "What is the source/system for this log?"
 > Otherwise, infer it automatically (e.g., `application`, `system`, `pipeline`, `cloud`).
 
 ---
@@ -66,7 +66,7 @@ Each block must contain:
 * 2–5 **step-by-step actions** (commands/config edits included)
 * A **short explanation** for *why* each step helps
 * Commands clearly marked (e.g., `systemctl restart`, `kubectl get pods`, etc.)
-* **⚠️ Label destructive actions as “WARNING”**
+* **⚠️ Label destructive actions as "WARNING"**
 
 ---
 
@@ -74,46 +74,44 @@ Each block must contain:
 
 Return your final result **strictly** in the following JSON structure — **no markdown or prose outside** the JSON.
 
-```json
-{
+{{
   "errors": [
-    {
+    {{
       "timestamp": "<timestamp or null>",
       "error_message": "<summary of error>",
       "error_type": "<ApplicationError|SystemError|ConfigError|TimeoutError|etc.>"
-    }
+    }}
   ],
   "possible_solutions": [
-    {
+    {{
       "error_message": "<same as matching error_message>",
-      "immediate_fix": {
+      "immediate_fix": {{
         "summary": "<short overview>",
         "steps": [
           "Step 1 with explanation and safe command",
           "Step 2 with explanation and safe command",
           "Step 3 with reasoning"
         ]
-      },
-      "permanent_fix": {
+      }},
+      "permanent_fix": {{
         "summary": "<short overview>",
         "steps": [
           "Code/config change description with justification",
           "Testing or validation step",
           "Deployment or automation adjustment"
         ]
-      },
-      "preventive_measures": {
+      }},
+      "preventive_measures": {{
         "summary": "<short overview>",
         "steps": [
           "Monitoring or alert policy with threshold details",
           "Automated validation or CI check to prevent reoccurrence",
           "Process or review guideline to reduce human error"
         ]
-      }
-    }
+      }}
+    }}
   ]
-}
-```
+}}
 
 ---
 
@@ -122,15 +120,13 @@ Return your final result **strictly** in the following JSON structure — **no m
 * Use only **factual evidence from logs**.
 * Quote short log fragments (≤25 words) as evidence.
 * Never invent details beyond visible clues.
-* If insufficient information:
+* If insufficient information, return:
 
-  ```json
-  {
-    "errors": [],
-    "possible_solutions": [],
-    "note": "Insufficient log data. Please provide more context or specify log source."
-  }
-  ```
+{{
+  "errors": [],
+  "possible_solutions": []
+}}
+
 * Output **pure JSON** — no explanations, markdown, or commentary outside the object.
 
 ---
@@ -143,19 +139,18 @@ Return your final result **strictly** in the following JSON structure — **no m
 
 ### 💡 EXAMPLE OUTPUT
 
-```json
-{
+{{
   "errors": [
-    {
+    {{
       "timestamp": "2025-10-15T11:02:13.345Z",
       "error_message": "NullPointerException at AuthService.login line 92 causing 500 on /api/login",
       "error_type": "ApplicationError"
-    }
+    }}
   ],
   "possible_solutions": [
-    {
+    {{
       "error_message": "NullPointerException at AuthService.login line 92 causing 500 on /api/login",
-      "immediate_fix": {
+      "immediate_fix": {{
         "summary": "Restore webserver functionality and reduce user impact.",
         "steps": [
           "1. Restart the webserver process using 'systemctl restart myapp-web' (⚠️ WARNING: may drop active connections).",
@@ -163,8 +158,8 @@ Return your final result **strictly** in the following JSON structure — **no m
           "3. Review the last deployment logs using 'kubectl logs <pod> --since=10m' to confirm if recent code changes introduced the error.",
           "4. Clear any corrupted session or cache data (e.g., Redis) to avoid repeated null references."
         ]
-      },
-      "permanent_fix": {
+      }},
+      "permanent_fix": {{
         "summary": "Fix the root cause in application code.",
         "steps": [
           "1. Add null checks and input validation for user object in AuthService.login before calling login().",
@@ -172,8 +167,8 @@ Return your final result **strictly** in the following JSON structure — **no m
           "3. Implement unit tests to simulate missing user data and validate correct handling.",
           "4. Redeploy the updated service after testing to staging and production."
         ]
-      },
-      "preventive_measures": {
+      }},
+      "preventive_measures": {{
         "summary": "Prevent similar null reference errors in future releases.",
         "steps": [
           "1. Add CI/CD step to run static code analysis (e.g., SonarQube) to detect possible NullPointerExceptions.",
@@ -181,10 +176,11 @@ Return your final result **strictly** in the following JSON structure — **no m
           "3. Integrate centralized error tracking (e.g., Sentry) to capture stack traces with user and request context.",
           "4. Conduct code review checklist updates requiring null safety validation for all user-handling methods."
         ]
-      }
-    }
+      }}
+    }}
   ]
-}
+}}
+
 ---
 
 Now analyze this log:
