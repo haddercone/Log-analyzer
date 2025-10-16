@@ -1,17 +1,23 @@
+
 import json
 import requests
-import os
 from typing import List, Optional
 from pydantic import BaseModel
-from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph
 from backend.prompts import log_analysis_prompt
 from backend.db import insert_log
 import time
-import openai 
-import certifi
-os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+import ssl
+import httpx
+from langchain_openai.chat_models.azure import AzureChatOpenAI
+
+API_KEY = ""
+# Use the Azure resource base endpoint (no path suffix). The deployment name is passed separately.
+AZURE_ENDPOINT = ""
+DEPLOYMENT_NAME = "gpt-4.1"
+cert = "/etc/ssl/cert.pem"
+ctx = ssl.create_default_context(cafile=cert)
+
 
 # ---------------------------
 # SCHEMA DEFINITIONS
@@ -63,11 +69,14 @@ def fetch_stackoverflow_solutions(error_msg: str) -> List[str]:
 def analyze_log_node(state: LogAnalysisState) -> dict:
     
 
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
+    llm = AzureChatOpenAI(
+        azure_deployment=DEPLOYMENT_NAME,
+        api_version="2024-12-01-preview",
+        azure_endpoint=AZURE_ENDPOINT,
+        api_key=API_KEY,
+        http_client=httpx.Client(verify=ctx),
+        timeout=60,
         temperature=0,
-        api_key="",
-        request_timeout=60
     )
     
     max_retries = 3
