@@ -1,21 +1,17 @@
 import json
 import requests
-import os
 from typing import List, Optional
-from urllib.parse import quote_plus
 from pydantic import BaseModel
-#from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph
 from backend.prompts_simple import log_analysis_prompt
 from backend.db import insert_log
 import time
-#import openai
 import ssl
 import httpx
 from langchain_openai.chat_models.azure import AzureChatOpenAI
-API_KEY = "ReplaeMeWithAPI"
+API_KEY = ""
 # Use the Azure resource base endpoint (no path suffix). The deployment name is passed separately.
-AZURE_ENDPOINT = "https://els-openai-hackathon-1083.openai.azure.com"
+AZURE_ENDPOINT = ""
 DEPLOYMENT_NAME = "gpt-4.1"
 cert = "/etc/ssl/cert.pem"
 ctx = ssl.create_default_context(cafile=cert)
