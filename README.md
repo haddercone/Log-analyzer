@@ -7,6 +7,11 @@ A full-stack app that:
 - Stores results in SQLite for history view
 
 ### 🔧 Setup
+- Create .env file and add following values:
+```
+API_KEY=
+AZURE_ENDPOINT=
+```
 
 ```bash
 pip install -r requirements.txt

@@ -10,10 +10,14 @@ import time
 import ssl
 import httpx
 from langchain_openai.chat_models.azure import AzureChatOpenAI
+from dotenv import load_dotenv
+import os
 
-API_KEY = ""
+load_dotenv()
+
+API_KEY = os.getenv("API_KEY")
 # Use the Azure resource base endpoint (no path suffix). The deployment name is passed separately.
-AZURE_ENDPOINT = ""
+AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
 DEPLOYMENT_NAME = "gpt-4.1"
 cert = "/etc/ssl/cert.pem"
 ctx = ssl.create_default_context(cafile=cert)
