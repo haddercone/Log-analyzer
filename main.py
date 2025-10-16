@@ -37,7 +37,7 @@ if st.button("Analyze Logs"):
                     error_summary = "No errors parsed"
 
                 try:
-                    analysis_text = json.dumps(response.dict(), indent=2)
+                    analysis_text = json.dumps(response.model_dump(), indent=2)
                 except Exception:
                     analysis_text = str(response)
 
@@ -51,10 +51,46 @@ if st.button("Analyze Logs"):
 
                 # ✅ Display results after spinner completes
                 st.success("✅ Analysis Complete!")
-                st.markdown("### **Error Summary**")
-                st.write(error_summary)
-                st.markdown("### **Detailed Analysis**")
-                st.code(analysis_text)
+                
+                # Display errors
+                if response.errors:
+                    st.markdown("### **🚨 Errors Detected**")
+                    for i, error in enumerate(response.errors, 1):
+                        with st.expander(f"Error {i}: {error.error_type}"):
+                            st.write(f"**Timestamp:** {error.timestamp}")
+                            st.write(f"**Message:** {error.error_message}")
+                            st.write(f"**Type:** {error.error_type}")
+                
+                # Display detailed solutions
+                if response.possible_solutions:
+                    st.markdown("### **💡 Detailed Solutions**")
+                    for i, solution in enumerate(response.possible_solutions, 1):
+                        with st.expander(f"Solution {i}: {solution.error_message[:50]}..."):
+                            
+                            # Immediate Fix
+                            st.markdown("#### 🔧 **Immediate Fix**")
+                            st.write(f"**Summary:** {solution.immediate_fix.summary}")
+                            st.markdown("**Steps:**")
+                            for step in solution.immediate_fix.steps:
+                                st.write(f"• {step}")
+                            
+                            # Permanent Fix
+                            st.markdown("#### 🔨 **Permanent Fix**")
+                            st.write(f"**Summary:** {solution.permanent_fix.summary}")
+                            st.markdown("**Steps:**")
+                            for step in solution.permanent_fix.steps:
+                                st.write(f"• {step}")
+                            
+                            # Preventive Measures
+                            st.markdown("#### 🛡️ **Preventive Measures**")
+                            st.write(f"**Summary:** {solution.preventive_measures.summary}")
+                            st.markdown("**Steps:**")
+                            for step in solution.preventive_measures.steps:
+                                st.write(f"• {step}")
+                
+                # Show raw JSON for technical users
+                with st.expander("📋 Raw JSON Output"):
+                    st.code(analysis_text)
 
                 # ---------------------------
                 # Feedback Section
