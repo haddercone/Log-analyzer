@@ -1,125 +1,263 @@
 import json
-import requests
-import os
-from typing import List, Optional
-from pydantic import BaseModel
-from langchain_openai import ChatOpenAI
-from langgraph.graph import StateGraph
-from backend.prompts import log_analysis_prompt
-from backend.db import insert_log
+import ssl
 import time
-import openai 
-import certifi
-os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+import os
+from typing import Optional, List
+from pydantic import BaseModel, ValidationError
+from dotenv import load_dotenv
+from backend.db import insert_log
+from backend.prompts import log_analysis_prompt
+from langchain_openai.chat_models.azure import AzureChatOpenAI
 
-# ---------------------------
-# SCHEMA DEFINITIONS
-# ---------------------------
+# Load environment variables
+load_dotenv()
 
-
+# -------------------------
+# Pydantic Models
+# -------------------------
 class Error(BaseModel):
-    timestamp: str
+    timestamp: Optional[str] = None
     error_message: str
     error_type: str
 
+class FixSection(BaseModel):
+    summary: str
+    steps: List[str]
 
 class PossibleSolution(BaseModel):
     error_message: str
-    solutions: List[str]
-
+    immediate_fix: FixSection
+    permanent_fix: FixSection
+    preventive_measures: FixSection
 
 class LogAnalysisResponse(BaseModel):
-    errors: List[Error]
-    possible_solutions: List[PossibleSolution]
     log_id: Optional[int] = None
+    errors: List[Error] = []
+    possible_solutions: List[PossibleSolution] = []
 
+# -------------------------
+# Azure OpenAI Setup
+# -------------------------
+API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
 
-# ✅ Define LangGraph State Schema
-class LogAnalysisState(BaseModel):
-    log_text: str
-    structured_output: Optional[dict] = None
-    final_output: Optional[dict] = None
+if not all([API_KEY, AZURE_ENDPOINT, DEPLOYMENT_NAME]):
+    raise ValueError("Missing required Azure OpenAI environment variables")
 
+# -------------------------
+# Constants
+# -------------------------
+MAX_LOG_LENGTH = 50000  # Prevent API timeouts
+MAX_RETRIES = 3
+RETRY_DELAY = 5
 
-# ---------------------------
-# NODE FUNCTIONS
-# ---------------------------
-
-def fetch_stackoverflow_solutions(error_msg: str) -> List[str]:
-    try:
-        response = requests.get(
-            f"https://api.duckduckgo.com/?q={error_msg}+site:stackoverflow.com&format=json"
-        )
-        data = response.json()
-        if "RelatedTopics" in data:
-            return [t["Text"] for t in data["RelatedTopics"][:3]]
-        return []
-    except Exception:
-        return ["No external solutions found."]
-
-
-
-def analyze_log_node(state: LogAnalysisState) -> dict:
+# -------------------------
+# Analyze Log
+# -------------------------
+def analyze_log_node(log_text: str) -> dict:
+    """Analyze log text using Azure OpenAI and return structured JSON."""
     
-
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0,
-        api_key="",
-        request_timeout=60
+    # Truncate if too long
+    if len(log_text) > MAX_LOG_LENGTH:
+        log_text = log_text[:MAX_LOG_LENGTH] + "\n... [truncated]"
+    
+    # Initialize LLM
+    llm = AzureChatOpenAI(
+        azure_endpoint=AZURE_ENDPOINT,
+        api_key=API_KEY,
+        azure_deployment=DEPLOYMENT_NAME,
+        api_version=API_VERSION,
+        temperature=0.3,
+        max_tokens=4000,
     )
-    
-    max_retries = 3
-    for attempt in range(max_retries):
+
+    response = None
+    for attempt in range(MAX_RETRIES):
         try:
-            response = llm.invoke(log_analysis_prompt.format(log_text=state.log_text))
+            formatted_prompt = log_analysis_prompt.format(log_text=log_text)
+            response = llm.invoke(formatted_prompt)
+            print("=== RAW LLM RESPONSE START ===")
+            print(repr(response))
+            if hasattr(response, "content"):
+                print("=== LLM RESPONSE CONTENT ===")
+                print(repr(response.content))
+            print("=== RAW LLM RESPONSE END ===")
             break
         except Exception as e:
-            print(f"OpenAI request failed ({attempt+1}/{max_retries}): {e}")
-            time.sleep(5)
-    else:
-        response = '{"errors": [], "possible_solutions": []}'
-  
+            print(f"OpenAI request failed ({attempt+1}/{MAX_RETRIES}): {type(e).__name__}('{e}')")
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY)
+    
+    json_output = {"errors": [], "possible_solutions": []}
+    if not response:
+        print("No response object received")
+        return json_output
+
     try:
-        json_output = json.loads(response.content)
-    except Exception:
-        json_output = {"errors": [], "possible_solutions": []}
-    return {"structured_output": json_output}
+        if hasattr(response, "content"):
+            response_text = response.content
+            if isinstance(response_text, str):
+                response_text = response_text.strip()
+                
+                # Remove markdown code blocks if present
+                if response_text.startswith("```"):
+                    lines = response_text.split("\n")
+                    # Remove first line if it's ```json or ```
+                    if lines[0].strip().startswith("```"):
+                        lines = lines[1:]
+                    # Remove last line if it's ```
+                    if lines and lines[-1].strip() == "```":
+                        lines = lines[:-1]
+                    response_text = "\n".join(lines).strip()
+                
+                start_idx = response_text.find('{')
+                end_idx = response_text.rfind('}') + 1
+                if start_idx != -1 and end_idx > start_idx:
+                    json_str = response_text[start_idx:end_idx]
+                    print(f"Extracted JSON string: {repr(json_str)}")
+                    try:
+                        parsed = json.loads(json_str)
+                        print(f"Parsed JSON: {parsed}")
+                        if isinstance(parsed, dict):
+                            json_output = {
+                                "errors": parsed.get("errors", []),
+                                "possible_solutions": parsed.get("possible_solutions", [])
+                            }
+                    except json.JSONDecodeError as je:
+                        print(f"JSON decode error: {je}")
+                        print(f"Failed to parse: {repr(json_str)}")
+                else:
+                    print("No valid JSON braces found in response")
+                    print(f"Full response text: {repr(response_text)}")
+            elif isinstance(response_text, dict):
+                json_output = {
+                    "errors": response_text.get("errors", []),
+                    "possible_solutions": response_text.get("possible_solutions", [])
+                }
+            else:
+                print(f"Unexpected response_text type: {type(response_text)}")
+        elif isinstance(response, str):
+            # Same JSON parsing logic as above for string
+            response = response.strip()
+            
+            # Remove markdown code blocks if present
+            if response.startswith("```"):
+                lines = response.split("\n")
+                if lines[0].strip().startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                response = "\n".join(lines).strip()
+            
+            start_idx = response.find('{')
+            end_idx = response.rfind('}') + 1
+            if start_idx != -1 and end_idx > start_idx:
+                json_str = response[start_idx:end_idx]
+                try:
+                    parsed = json.loads(json_str)
+                    if isinstance(parsed, dict):
+                        json_output = {
+                            "errors": parsed.get("errors", []),
+                            "possible_solutions": parsed.get("possible_solutions", [])
+                        }
+                except json.JSONDecodeError as je:
+                    print(f"JSON decode error: {je}")
+        else:
+            print("Response is of unexpected type:", type(response))
+    except Exception as e:
+        print(f"Error processing response: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print(f"Final json_output: {json_output}")
+    return json_output
 
 
-def enrich_with_external_solutions(state: LogAnalysisState) -> dict:
-    enriched = state.structured_output
-    for sol in enriched.get("possible_solutions", []):
-        extra = fetch_stackoverflow_solutions(sol["error_message"])
-        sol["solutions"].extend(extra)
-    return {"final_output": enriched}
-
-
-# ---------------------------
-# MAIN RUN FUNCTION
-# ---------------------------
-
+# -------------------------
+# Run Analysis
+# -------------------------
 def run_log_analysis(log_text: str) -> LogAnalysisResponse:
-    # ✅ Pass schema to StateGraph
-    graph = StateGraph(LogAnalysisState)
+    """Run log analysis using Azure OpenAI, save to DB, and return structured response."""
+    if not log_text or not log_text.strip():
+        return LogAnalysisResponse()
+    
+    try:
+        result_dict = analyze_log_node(log_text)
+        
+        # Validate and create response with error handling
+        errors = []
+        for error_data in result_dict.get("errors", []):
+            try:
+                errors.append(Error(**error_data))
+            except ValidationError as e:
+                print(f"Invalid error data: {e}")
+                # Try to fix common issues
+                if isinstance(error_data, dict):
+                    if "timestamp" not in error_data:
+                        error_data["timestamp"] = None
+                    try:
+                        errors.append(Error(**error_data))
+                    except ValidationError:
+                        pass
+        
+        solutions = []
+        for solution_data in result_dict.get("possible_solutions", []):
+            try:
+                solutions.append(PossibleSolution(**solution_data))
+            except ValidationError as e:
+                print(f"Invalid solution data: {e}")
+        
+        response = LogAnalysisResponse(
+            errors=errors,
+            possible_solutions=solutions
+        )
+        
+        # Save to DB
+        analysis_json = response.model_dump()
+        log_id = insert_log(
+            error_summary=", ".join([e.error_message for e in response.errors]) or "No errors detected",
+            analysis=json.dumps(analysis_json, indent=2)
+        )
+        response.log_id = log_id
+        return response
+        
+    except Exception as e:
+        print(f"Analysis failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return LogAnalysisResponse()
 
-    graph.add_node("analyze_log", analyze_log_node)
-    graph.add_node("enrich", enrich_with_external_solutions)
-    graph.add_edge("analyze_log", "enrich")
-    graph.set_entry_point("analyze_log")
-    graph.set_finish_point("enrich")
-
-    # Compile the graph into an executable app
-    app = graph.compile()
-
-    # Run the pipeline
-    result = app.invoke({"log_text": log_text})
-
-    # Save to database
-    log_id = insert_log(log_text, json.dumps(result["final_output"], indent=2))
-
-    # Convert to model response
-    response = LogAnalysisResponse(**result["final_output"])
-    response.log_id = log_id  # Attach log ID dynamically
-    return response
+# -------------------------
+# Pretty Formatter
+# -------------------------
+def format_response_readable(response: LogAnalysisResponse) -> str:
+    """Format the analysis response in a readable format."""
+    lines = [f"📘 Log ID: {response.log_id}\n"]
+    
+    if response.errors:
+        lines.append("🚨 Errors Found:")
+        for e in response.errors:
+            lines.append(f"- Timestamp: {e.timestamp or 'N/A'}")
+            lines.append(f"  Message: {e.error_message}")
+            lines.append(f"  Type: {e.error_type}\n")
+    else:
+        lines.append("✅ No errors detected.\n")
+    
+    if response.possible_solutions:
+        lines.append("\n🧠 Possible Solutions:")
+        for ps in response.possible_solutions:
+            lines.append(f"\nError: {ps.error_message}")
+            for section_name, fix in [
+                ("Immediate Fix", ps.immediate_fix),
+                ("Permanent Fix", ps.permanent_fix),
+                ("Preventive Measures", ps.preventive_measures),
+            ]:
+                lines.append(f"  🔹 {section_name}: {fix.summary}")
+                for step in fix.steps:
+                    lines.append(f"    - {step}")
+    else:
+        lines.append("ℹ️ No possible solutions available.\n")
+    
+    return "\n".join(lines)
